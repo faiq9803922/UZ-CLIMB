@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>UZELVS: FINAL PEAKS</title>
+    <style>
+        :root { --neon: #00f2ff; --gold: #f1c40f; --danger: #ff4757; --grass: #2e7d32; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; font-family: 'Segoe UI', sans-serif; }
+        
+        #intro { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 9999; }
+        #intro h1 { color: #fff; font-size: 40px; text-shadow: 0 0 15px var(--neon); animation: fade 1.5s forwards; }
+        @keyframes fade { 0% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
+
+        #game-ui { position: relative; width: 100vw; height: 100vh; background: linear-gradient(#87CEEB, #E0F7FA); display: none; }
+        canvas { position: absolute; top: 0; left: 0; z-index: 10; display: block; }
+
+        /* HUD */
+        .hud { position: absolute; top: 15px; z-index: 100; color: #000; font-weight: bold; pointer-events: none; }
+        #hud-left { left: 20px; } #hud-right { right: 20px; text-align: right; }
+        .bar { width: 150px; height: 15px; background: rgba(0,0,0,0.2); border: 2px solid #000; border-radius: 8px; overflow: hidden; }
+        #fuel-fill { width: 100%; height: 100%; background: #2ecc71; transition: width 0.1s; }
+
+        /* Controls */
+        .btn { position: absolute; bottom: 30px; width: 90px; height: 90px; border-radius: 50%; border: 4px solid #fff; color: #fff; font-weight: bold; z-index: 100; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; user-select: none; }
+        #btn-brake { left: 30px; background: var(--danger); }
+        #btn-gas { right: 30px; background: #2ecc71; }
+
+        /* Menus */
+        .overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.85); z-index: 1000; display: none; flex-direction: column; align-items: center; justify-content: center; color: #fff; }
+        .card { background: #1a1a1a; padding: 30px; border: 3px solid var(--neon); border-radius: 20px; text-align: center; width: 300px; box-shadow: 0 0 20px var(--neon); }
+        .menu-btn { width: 100%; padding: 15px; margin: 10px 0; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        
+        /* Tuning Styles */
+        .tuning-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; background: #333; padding: 10px; border-radius: 5px; }
+        .tune-val { color: var(--gold); }
+    </style>
+</head>
+<body>
+
+<div id="intro"><h1>UZELVS</h1></div>
+
+<!-- Tuning/Start Menu -->
+<div id="start-menu" class="overlay" style="display: flex;">
+    <div class="card">
+        <h2 style="color:var(--neon); margin-top:0;">GARAGE</h2>
+        <div class="tuning-row">
+            <span>ENGINE</span>
+            <button onclick="upgrade('power')">+</button>
+            <span id="p-lvl" class="tune-val">Lvl 1</span>
+        </div>
+        <div class="tuning-row">
+            <span>TANK</span>
+            <button onclick="upgrade('tank')">+</button>
+            <span id="t-lvl" class="tune-val">Lvl 1</span>
+        </div>
+        <p style="font-size: 12px; color: #aaa;">Early Access Upgrades Free</p>
+        <button class="menu-btn" style="background:var(--neon)" onclick="startGame()">START RACE</button>
+    </div>
+</div>
+
+<!-- Game UI -->
+<div id="game-ui">
+    <div id="hud-left" class="hud">
+        <div id="dist">0m</div>
+        <div class="bar"><div id="fuel-fill"></div></div>
+        <div style="font-size: 11px;">FUEL RESERVES</div>
+    </div>
+    <div id="hud-right" class="hud">
+        <div style="color:var(--gold); font-size: 20px;">🪙 <span id="coins">0</span></div>
+    </div>
+
+    <div class="btn" id="btn-brake">BRAKE</div>
+    <div class="btn" id="btn-gas">GAS</div>
+
+    <!-- Death Screen -->
+    <div id="death-screen" class="overlay">
+        <div class="card" style="border-color: var(--danger); box-shadow: 0 0 20px var(--danger);">
+            <h2 id="death-title" style="color:var(--danger)">GAME OVER</h2>
+            <h1 id="final-dist" style="margin: 10px 0;">0m</h1>
+            <p id="death-msg">Vehicle Destroyed</p>
+            <button class="menu-btn" style="background:var(--danger); color: white;" onclick="location.reload()">TRY AGAIN</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+
+<script>
+const { Engine, Render, Runner, Bodies, Composite, Body, Events, Constraint } = Matter;
+
+let engine, render, runner, car, chassis, isGameOver = false;
+let fuel = 100, maxFuel = 100, lastX = -200, currentDist = 0;
+let powerMult = 0.025, fuelDrain = 0.12;
+
+const keys = { gas: 0, brake: 0 };
+const stats = { power: 1, tank: 1 };
+
+// Intro delay
+setTimeout(() => {
+    document.getElementById('intro').style.display = 'none';
+}, 1600);
+
+function upgrade(type) {
+    if(type === 'power') {
+        stats.power++;
+        powerMult += 0.006;
+        document.getElementById('p-lvl').innerText = "Lvl " + stats.power;
+    } else {
+        stats.tank++;
+        maxFuel += 25;
+        fuelDrain -= 0.01;
+        document.getElementById('t-lvl').innerText = "Lvl " + stats.tank;
+    }
+}
+
+function startGame() {
+    document.getElementById('start-menu').style.display = 'none';
+    document.getElementById('game-ui').style.display = 'block';
+    fuel = maxFuel;
+    // Fix: Request animation frame to ensure display:block has taken effect
+    requestAnimationFrame(() => {
+        initGame();
+    });
+}
+
+function initGame() {
+    engine = Engine.create();
+    
+    const container = document.getElementById('game-ui');
+    render = Render.create({
+        element: container,
+        engine: engine,
+        options: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            wireframes: false,
+            background: 'transparent'
+        }
+    });
+
+    // Spawn Car higher up to avoid clipping
+    chassis = Bodies.rectangle(200, 300, 110, 25, { 
+        chamfer: { radius: 10 }, 
+        render: { fillStyle: '#e74c3c' },
+        label: 'chassis',
+        frictionAir: 0.02
+    });
+    
+    const wheelA = Bodies.circle(170, 325, 18, { friction: 1.5, render: { fillStyle: '#222' }, label: 'wheel' });
+    const wheelB = Bodies.circle(230, 325, 18, { friction: 1.5, render: { fillStyle: '#222' }, label: 'wheel' });
+    
+    const axleA = Constraint.create({ bodyA: chassis, bodyB: wheelA, pointB: {x:0, y:0}, pointA: {x:-30, y:15}, stiffness: 0.15, length: 5, render: {visible: false} });
+    const axleB = Constraint.create({ bodyA: chassis, bodyB: wheelB, pointB: {x:0, y:0}, pointA: {x:30, y:15}, stiffness: 0.15, length: 5, render: {visible: false} });
+
+    car = chassis;
+    Composite.add(engine.world, [chassis, wheelA, wheelB, axleA, axleB]);
+
+    // Initial Safe Ground
+    for (let i = 0; i < 15; i++) addTerrain(i < 5);
+
+    Events.on(engine, 'beforeUpdate', () => {
+        if (isGameOver) return;
+
+        if (keys.gas && fuel > 0) {
+            Body.applyForce(wheelB, wheelB.position, { x: powerMult, y: 0.005 });
+            Body.applyForce(wheelA, wheelA.position, { x: powerMult, y: 0.005 });
+            // Apply slight tilt when accelerating in air
+            Body.rotate(chassis, 0.01);
+            fuel -= fuelDrain;
+        }
+        if (keys.brake) {
+            Body.setAngularVelocity(wheelA, wheelA.angularVelocity * 0.8);
+            Body.setAngularVelocity(wheelB, wheelB.angularVelocity * 0.8);
+            Body.rotate(chassis, -0.01);
+        }
+
+        if (car.position.x > lastX - 2500) addTerrain(false);
+        
+        currentDist = Math.max(currentDist, Math.floor(car.position.x / 50));
+        document.getElementById('dist').innerText = currentDist + "m";
+        document.getElementById('fuel-fill').style.width = (fuel / maxFuel * 100) + "%";
+        
+        Render.lookAt(render, car, { x: 500, y: 300 });
+
+        // Check Fail States
+        if (fuel <= 0) { 
+            document.getElementById('death-msg').innerText = "Out of Fuel!";
+            endGame(); 
+        }
+        if (car.position.y > 2500) { 
+            document.getElementById('death-msg').innerText = "Fell into Abyss!";
+            endGame(); 
+        }
+        // If flipped for too long (Angle > ~140 degrees)
+        if (Math.abs(chassis.angle) > 2.4) {
+            document.getElementById('death-msg').innerText = "Vehicle Overturned!";
+            setTimeout(endGame, 800); 
+        }
+    });
+
+    Render.run(render);
+    runner = Runner.create();
+    Runner.run(runner, engine);
+}
+
+function addTerrain(safe) {
+    const sw = 200, yBase = 650;
+    let y1 = safe ? yBase : yBase + Math.sin(lastX * 0.002) * 150;
+    let nextX = lastX + sw;
+    let y2 = safe ? yBase : yBase + Math.sin(nextX * 0.002) * 150;
+    
+    let midX = (lastX + nextX) / 2;
+    let midY = (y1 + y2) / 2;
+    let angle = Math.atan2(y2 - y1, nextX - lastX);
+
+    let ground = Bodies.rectangle(midX, midY + 400, sw + 10, 800, { isStatic: true, angle, friction: 1, render: { fillStyle: '#4e342e' } });
+    let grass = Bodies.rectangle(midX, midY, sw + 10, 20, { isStatic: true, angle, render: { fillStyle: '#2e7d32' } });
+    Composite.add(engine.world, [ground, grass]);
+
+    if (!safe) {
+        let r = Math.random();
+        if (r < 0.12) { // MINE
+            Composite.add(engine.world, Bodies.circle(midX, midY - 20, 15, { isStatic: true, isSensor: true, label: 'mine', render: { fillStyle: '#ff1744' } }));
+        } else if (r < 0.25) { // FUEL
+            Composite.add(engine.world, Bodies.rectangle(midX, midY - 40, 30, 40, { isStatic: true, isSensor: true, label: 'fuel_item', render: { fillStyle: '#2ecc71' } }));
+        } else if (r < 0.35) { // RAMP
+            Composite.add(engine.world, Bodies.rectangle(midX, midY - 25, 120, 20, { isStatic: true, angle: angle - 0.6, render: { fillStyle: '#795548' } }));
+        }
+    }
+    lastX = nextX;
+}
+
+function endGame() {
+    if(isGameOver) return;
+    isGameOver = true;
+    document.getElementById('death-screen').style.display = 'flex';
+    document.getElementById('final-dist').innerText = currentDist + "m";
+}
+
+Events.on(engine, 'collisionStart', (e) => {
+    e.pairs.forEach(p => {
+        const labels = [p.bodyA.label, p.bodyB.label];
+        const item = labels.includes('mine') ? (p.bodyA.label === 'mine' ? p.bodyA : p.bodyB) : 
+                     labels.includes('fuel_item') ? (p.bodyA.label === 'fuel_item' ? p.bodyA : p.bodyB) : null;
+
+        if (item) {
+            if (item.label === 'mine') {
+                fuel -= 25;
+                Body.applyForce(chassis, chassis.position, { x: -0.08, y: -0.25 });
+            } else if (item.label === 'fuel_item') {
+                fuel = Math.min(maxFuel, fuel + (maxFuel * 0.4));
+            }
+            Composite.remove(engine.world, item);
+        }
+    });
+});
+
+// Resizer
+window.addEventListener('resize', () => {
+    if (render) {
+        render.canvas.width = window.innerWidth;
+        render.canvas.height = window.innerHeight;
+    }
+});
+
+// Control Logic
+const g = document.getElementById('btn-gas'), b = document.getElementById('btn-brake');
+g.addEventListener('touchstart', (e) => { e.preventDefault(); keys.gas = 1; });
+g.addEventListener('touchend', () => keys.gas = 0);
+b.addEventListener('touchstart', (e) => { e.preventDefault(); keys.brake = 1; });
+b.addEventListener('touchend', () => keys.brake = 0);
+
+// Keyboards
+window.onkeydown = (e) => { if(e.code==='ArrowRight'||e.code==='KeyD') keys.gas=1; if(e.code==='ArrowLeft'||e.code==='KeyA') keys.brake=1; };
+window.onkeyup = (e) => { if(e.code==='ArrowRight'||e.code==='KeyD') keys.gas=0; if(e.code==='ArrowLeft'||e.code==='KeyA') keys.brake=0; };
+</script>
+</body>
+</html>
