@@ -21,6 +21,9 @@
         .bar { width: 150px; height: 15px; background: rgba(0,0,0,0.2); border: 2px solid #000; border-radius: 8px; overflow: hidden; }
         #fuel-fill { width: 100%; height: 100%; background: #2ecc71; transition: width 0.1s; }
 
+        /* Stop/Run Button */
+        #btn-pause { position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 10px 20px; background: var(--gold); border: 2px solid #000; border-radius: 8px; font-weight: bold; cursor: pointer; color: #000; }
+
         /* Controls */
         .btn { position: absolute; bottom: 30px; width: 90px; height: 90px; border-radius: 50%; border: 4px solid #fff; color: #fff; font-weight: bold; z-index: 100; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; user-select: none; }
         #btn-brake { left: 30px; background: var(--danger); }
@@ -31,7 +34,6 @@
         .card { background: #1a1a1a; padding: 30px; border: 3px solid var(--neon); border-radius: 20px; text-align: center; width: 300px; box-shadow: 0 0 20px var(--neon); }
         .menu-btn { width: 100%; padding: 15px; margin: 10px 0; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; }
         
-        /* Tuning Styles */
         .tuning-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; background: #333; padding: 10px; border-radius: 5px; }
         .tune-val { color: var(--gold); }
     </style>
@@ -40,7 +42,6 @@
 
 <div id="intro"><h1>UZELVS</h1></div>
 
-<!-- Tuning/Start Menu -->
 <div id="start-menu" class="overlay" style="display: flex;">
     <div class="card">
         <h2 style="color:var(--neon); margin-top:0;">GARAGE</h2>
@@ -59,8 +60,9 @@
     </div>
 </div>
 
-<!-- Game UI -->
 <div id="game-ui">
+    <button id="btn-pause" onclick="toggleEngine()">STOP ENGINE</button>
+
     <div id="hud-left" class="hud">
         <div id="dist">0m</div>
         <div class="bar"><div id="fuel-fill"></div></div>
@@ -73,7 +75,6 @@
     <div class="btn" id="btn-brake">BRAKE</div>
     <div class="btn" id="btn-gas">GAS</div>
 
-    <!-- Death Screen -->
     <div id="death-screen" class="overlay">
         <div class="card" style="border-color: var(--danger); box-shadow: 0 0 20px var(--danger);">
             <h2 id="death-title" style="color:var(--danger)">GAME OVER</h2>
@@ -89,14 +90,13 @@
 <script>
 const { Engine, Render, Runner, Bodies, Composite, Body, Events, Constraint } = Matter;
 
-let engine, render, runner, car, chassis, isGameOver = false;
+let engine, render, runner, car, chassis, wheelA, wheelB, isGameOver = false, isPaused = false;
 let fuel = 100, maxFuel = 100, lastX = -200, currentDist = 0;
 let powerMult = 0.025, fuelDrain = 0.12;
 
 const keys = { gas: 0, brake: 0 };
 const stats = { power: 1, tank: 1 };
 
-// Intro delay
 setTimeout(() => {
     document.getElementById('intro').style.display = 'none';
 }, 1600);
@@ -114,11 +114,27 @@ function upgrade(type) {
     }
 }
 
+function toggleEngine() {
+    if (isGameOver) return;
+    
+    isPaused = !isPaused;
+    const btn = document.getElementById('btn-pause');
+    
+    if (isPaused) {
+        Runner.stop(runner);
+        btn.innerText = "RUN ENGINE";
+        btn.style.background = "#2ecc71";
+    } else {
+        Runner.run(runner, engine);
+        btn.innerText = "STOP ENGINE";
+        btn.style.background = "var(--gold)";
+    }
+}
+
 function startGame() {
     document.getElementById('start-menu').style.display = 'none';
     document.getElementById('game-ui').style.display = 'block';
     fuel = maxFuel;
-    // Fix: Request animation frame to ensure display:block has taken effect
     requestAnimationFrame(() => {
         initGame();
     });
@@ -139,7 +155,6 @@ function initGame() {
         }
     });
 
-    // Spawn Car higher up to avoid clipping
     chassis = Bodies.rectangle(200, 300, 110, 25, { 
         chamfer: { radius: 10 }, 
         render: { fillStyle: '#e74c3c' },
@@ -147,8 +162,8 @@ function initGame() {
         frictionAir: 0.02
     });
     
-    const wheelA = Bodies.circle(170, 325, 18, { friction: 1.5, render: { fillStyle: '#222' }, label: 'wheel' });
-    const wheelB = Bodies.circle(230, 325, 18, { friction: 1.5, render: { fillStyle: '#222' }, label: 'wheel' });
+    wheelA = Bodies.circle(170, 325, 18, { friction: 1.5, render: { fillStyle: '#222' }, label: 'wheel' });
+    wheelB = Bodies.circle(230, 325, 18, { friction: 1.5, render: { fillStyle: '#222' }, label: 'wheel' });
     
     const axleA = Constraint.create({ bodyA: chassis, bodyB: wheelA, pointB: {x:0, y:0}, pointA: {x:-30, y:15}, stiffness: 0.15, length: 5, render: {visible: false} });
     const axleB = Constraint.create({ bodyA: chassis, bodyB: wheelB, pointB: {x:0, y:0}, pointA: {x:30, y:15}, stiffness: 0.15, length: 5, render: {visible: false} });
@@ -156,16 +171,14 @@ function initGame() {
     car = chassis;
     Composite.add(engine.world, [chassis, wheelA, wheelB, axleA, axleB]);
 
-    // Initial Safe Ground
     for (let i = 0; i < 15; i++) addTerrain(i < 5);
 
     Events.on(engine, 'beforeUpdate', () => {
-        if (isGameOver) return;
+        if (isGameOver || isPaused) return;
 
         if (keys.gas && fuel > 0) {
             Body.applyForce(wheelB, wheelB.position, { x: powerMult, y: 0.005 });
             Body.applyForce(wheelA, wheelA.position, { x: powerMult, y: 0.005 });
-            // Apply slight tilt when accelerating in air
             Body.rotate(chassis, 0.01);
             fuel -= fuelDrain;
         }
@@ -183,7 +196,6 @@ function initGame() {
         
         Render.lookAt(render, car, { x: 500, y: 300 });
 
-        // Check Fail States
         if (fuel <= 0) { 
             document.getElementById('death-msg').innerText = "Out of Fuel!";
             endGame(); 
@@ -192,7 +204,6 @@ function initGame() {
             document.getElementById('death-msg').innerText = "Fell into Abyss!";
             endGame(); 
         }
-        // If flipped for too long (Angle > ~140 degrees)
         if (Math.abs(chassis.angle) > 2.4) {
             document.getElementById('death-msg').innerText = "Vehicle Overturned!";
             setTimeout(endGame, 800); 
@@ -220,12 +231,10 @@ function addTerrain(safe) {
 
     if (!safe) {
         let r = Math.random();
-        if (r < 0.12) { // MINE
+        if (r < 0.12) { 
             Composite.add(engine.world, Bodies.circle(midX, midY - 20, 15, { isStatic: true, isSensor: true, label: 'mine', render: { fillStyle: '#ff1744' } }));
-        } else if (r < 0.25) { // FUEL
+        } else if (r < 0.25) { 
             Composite.add(engine.world, Bodies.rectangle(midX, midY - 40, 30, 40, { isStatic: true, isSensor: true, label: 'fuel_item', render: { fillStyle: '#2ecc71' } }));
-        } else if (r < 0.35) { // RAMP
-            Composite.add(engine.world, Bodies.rectangle(midX, midY - 25, 120, 20, { isStatic: true, angle: angle - 0.6, render: { fillStyle: '#795548' } }));
         }
     }
     lastX = nextX;
@@ -256,7 +265,6 @@ Events.on(engine, 'collisionStart', (e) => {
     });
 });
 
-// Resizer
 window.addEventListener('resize', () => {
     if (render) {
         render.canvas.width = window.innerWidth;
@@ -264,15 +272,17 @@ window.addEventListener('resize', () => {
     }
 });
 
-// Control Logic
 const g = document.getElementById('btn-gas'), b = document.getElementById('btn-brake');
-g.addEventListener('touchstart', (e) => { e.preventDefault(); keys.gas = 1; });
+g.addEventListener('touchstart', (e) => { e.preventDefault(); if(!isPaused) keys.gas = 1; });
 g.addEventListener('touchend', () => keys.gas = 0);
-b.addEventListener('touchstart', (e) => { e.preventDefault(); keys.brake = 1; });
+b.addEventListener('touchstart', (e) => { e.preventDefault(); if(!isPaused) keys.brake = 1; });
 b.addEventListener('touchend', () => keys.brake = 0);
 
-// Keyboards
-window.onkeydown = (e) => { if(e.code==='ArrowRight'||e.code==='KeyD') keys.gas=1; if(e.code==='ArrowLeft'||e.code==='KeyA') keys.brake=1; };
+window.onkeydown = (e) => { 
+    if(isPaused) return;
+    if(e.code==='ArrowRight'||e.code==='KeyD') keys.gas=1; 
+    if(e.code==='ArrowLeft'||e.code==='KeyA') keys.brake=1; 
+};
 window.onkeyup = (e) => { if(e.code==='ArrowRight'||e.code==='KeyD') keys.gas=0; if(e.code==='ArrowLeft'||e.code==='KeyA') keys.brake=0; };
 </script>
 </body>
